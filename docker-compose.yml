@@ -42,6 +42,8 @@ services:
     depends_on:
       legacy-db:
         condition: service_healthy
+      gateway:
+        condition: service_started
 
   # Gateway: API v1 + adapter. Es el único servicio nuevo que habla con legacy-db.
   # depends_on sin condición de salud: si la base cae, el gateway sigue arriba y responde 503.
@@ -55,6 +57,17 @@ services:
       - gateway-data:/app/data
     depends_on:
       - legacy-db
+
+  # Pruebas del equipo: docker compose --profile test run --rm tests
+  tests:
+    build: ./tests
+    profiles: ["test"]
+    env_file: .env
+    volumes:
+      - ./test-results:/test-results
+      - ./logs:/logs:ro
+    depends_on:
+      - gateway
 
 volumes:
   legacy-db-data:
