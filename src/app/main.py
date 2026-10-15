@@ -12,10 +12,16 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from adapter import legacy_repository as legacy
-from app import audit, security
-from app.models import BeneficiaryList, Company, Member
+from app import audit, retirements, security, store
+from app.models import BeneficiaryList, Company, Member, RetirementRequest
 
 app = FastAPI(title="Gateway Legacy Escape", version="1.0.0")
+
+
+@app.on_event("startup")
+def startup():
+    store.init()
+    retirements.start_worker()
 
 
 def error(status, message, **extra):
@@ -53,6 +59,11 @@ async def not_found(request, exc):
     return error(404, "Recurso no encontrado")
 
 
+@app.exception_handler(retirements.Conflict)
+async def conflict(request, exc):
+    return error(409, "El requestId ya se usó para otro afiliado")
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_error(request, exc):
     message = exc.detail if isinstance(exc.detail, str) else "Error en la solicitud"
@@ -87,3 +98,9 @@ def get_beneficiaries(document: str):
 @app.get("/api/v1/companies/{company_id}", response_model=Company)
 def get_company(company_id: str):
     return legacy.get_company(company_id)
+
+
+@app.post("/api/v1/members/{document}/retirements", status_code=201)
+def register_retirement(document: str, body: RetirementRequest, request: Request):
+    status, payload = retirements.register(document, body, request.state.consumer)
+    return JSONResponse(status_code=status, content=payload)

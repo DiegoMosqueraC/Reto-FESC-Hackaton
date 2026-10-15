@@ -8,6 +8,7 @@ DBA (person_master / document_number / status_code): lo detecta en cada conexió
 
 import os
 import socket
+import threading
 
 import psycopg2
 
@@ -36,11 +37,26 @@ def _settings():
     }
 
 
-def _reachable(host, port, timeout=0.8):
-    # libpq no acepta connect_timeout menor a 2 s; este chequeo previo responde rápido
-    # cuando el contenedor está detenido (el nombre no resuelve o el puerto rechaza).
+def _resolve(host, port, timeout=0.7):
+    """Resuelve el nombre con tiempo límite: con el contenedor detenido el DNS tarda ~4 s."""
+    result = {}
+
+    def lookup():
+        try:
+            result["ip"] = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+        except OSError:
+            pass
+
+    worker = threading.Thread(target=lookup, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    return result.get("ip")
+
+
+def _reachable(ip, port, timeout=0.7):
+    # libpq no acepta connect_timeout menor a 2 s; este chequeo previo falla rápido.
     try:
-        with socket.create_connection((host, port), timeout=timeout):
+        with socket.create_connection((ip, port), timeout=timeout):
             return True
     except OSError:
         return False
@@ -48,10 +64,11 @@ def _reachable(host, port, timeout=0.8):
 
 def _connect():
     cfg = _settings()
-    if not _reachable(cfg["host"], cfg["port"]):
+    ip = _resolve(cfg["host"], cfg["port"])
+    if ip is None or not _reachable(ip, cfg["port"]):
         raise LegacyUnavailable()
     try:
-        conn = psycopg2.connect(connect_timeout=2, options="-c statement_timeout=2000", **cfg)
+        conn = psycopg2.connect(hostaddr=ip, connect_timeout=2, options="-c statement_timeout=2000", **cfg)
     except psycopg2.Error as exc:
         raise LegacyUnavailable() from exc
     return conn
