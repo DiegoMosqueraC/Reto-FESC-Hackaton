@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from adapter import legacy_repository as legacy
-from app import audit, retirements, security, store
+from app import audit, migration, retirements, security, store
 from app.models import BeneficiaryList, Company, Member, RetirementRequest
 
 app = FastAPI(title="Gateway Legacy Escape", version="1.0.0")
@@ -104,3 +104,8 @@ def get_company(company_id: str):
 def register_retirement(document: str, body: RetirementRequest, request: Request):
     status, payload = retirements.register(document, body, request.state.consumer)
     return JSONResponse(status_code=status, content=payload)
+
+
+@app.get("/api/v1/migration/status")
+def migration_status():
+    return {"domains": migration.load()}
