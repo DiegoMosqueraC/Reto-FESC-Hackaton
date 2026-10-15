@@ -3,14 +3,16 @@
 Los consumidores solo ven el modelo canónico; el acceso a la base pasa por el adapter.
 """
 
+import time
 import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from adapter import legacy_repository as legacy
+from app import audit, security
 from app.models import BeneficiaryList, Company, Member
 
 app = FastAPI(title="Gateway Legacy Escape", version="1.0.0")
@@ -20,6 +22,25 @@ def error(status, message, **extra):
     body = {"message": message, "error_id": str(uuid.uuid4())}
     body.update(extra)
     return JSONResponse(status_code=status, content=body)
+
+
+@app.middleware("http")
+async def authenticate_and_audit(request: Request, call_next):
+    started = time.perf_counter()
+    consumer = security.consumer_for(request.headers.get("authorization"))
+    request.state.consumer = consumer
+    path = request.url.path
+    if path.startswith("/api/") and consumer is None:
+        response = error(401, "Token ausente o inválido")
+    elif path.startswith("/api/") and request.method != "GET" and not security.can_write(consumer):
+        response = error(403, "El consumidor no tiene permisos de escritura")
+    else:
+        try:
+            response = await call_next(request)
+        except Exception:
+            response = error(500, "Error interno del gateway")
+    audit.record(consumer, request.method, path, response.status_code, (time.perf_counter() - started) * 1000)
+    return response
 
 
 @app.exception_handler(legacy.LegacyUnavailable)
